@@ -21,3 +21,4 @@ class World():
     pass
 
   def draw(self, surface, cam):
+    pass
