@@ -7,7 +7,6 @@ import constants as C
 FONT_DIR = 'assets/fonts'
 WHITE = (255, 255, 255)
 
-
 def _plain(s):
   return ''.join(c for c in unicodedata.normalize('NFKD', s) if not unicodedata.combining(c)).lower()
 
@@ -75,7 +74,6 @@ def supports(font, text):
 def font_for(text, size):
   f = game_font(size)
   return f if supports(f, strip_marks(text)) else fallback_font(size)
-
 
 def render_mask(font, text):
   if supports(font, text):
@@ -164,7 +162,7 @@ class CarvedText():
       g = pygame.Surface((w, h))
       g.blit(tint(mask, glow), (pad, pad))
       g = blur(blur(g, 5), 3)
-      g.blit(g, (0, 0), special_flags=pygame.BLEND_ADD)  
+      g.blit(g, (0, 0), special_flags=pygame.BLEND_ADD) 
       self.glow = []
       for k in range(1, 9):
         lvl = g.copy()
@@ -212,7 +210,6 @@ def fit_font(text, max_width, start, minimum=20):
       return f
     size -= 4
   return font_for(text, minimum)
-
 
 class MenuButton():
   def __init__(self, font, label, action, center):
@@ -277,4 +274,3 @@ class Menu():
   def draw(self, surface, t):
     for i, b in enumerate(self.buttons):
       b.draw(surface, i == self.selected, t)
-
