@@ -10,24 +10,21 @@ import ui
 from title_screen import TitleScene, Overlay
 from ui import Menu
 
-
 mixer.init()
 pygame.init()
-
 
 screen = pygame.display.set_mode((C.SCREEN_WIDTH, C.SCREEN_HEIGHT))
 GAME_TITLE = 'The Desmōtērion'
 pygame.display.set_caption(GAME_TITLE)
 clock = pygame.time.Clock()
-font = ui.game_font(20)  
-
+font = ui.game_font(20)
 
 def scale_img(image, scale):
-  pass
+  return pygame.transform.scale(image, (image.get_width() * scale, image.get_height() * scale))
 
 
 def load_img(path, scale=1):
-  pass
+  return scale_img(pygame.image.load(path).convert_alpha(), scale)
 
 
 def load_sound(path, volume):
@@ -36,29 +33,93 @@ def load_sound(path, volume):
   return sound
 
 
+mixer.music.load('assets/audio/music.mp3')
+mixer.music.set_volume(0.3)
+mixer.music.play(-1, 0.0, 5000)
+sounds = {
+  'shot': load_sound('assets/audio/arrow_shot.mp3', 0.5),
+  'hit': load_sound('assets/audio/arrow_hit.mp3', 0.5),
+  'coin': load_sound('assets/audio/coin.mp3', 0.5),
+  'heal': load_sound('assets/audio/heal.mp3', 0.5),
+}
+
+heart_empty = load_img('assets/images/items/heart_empty.png', C.ITEM_SCALE)
+heart_half = load_img('assets/images/items/heart_half.png', C.ITEM_SCALE)
+heart_full = load_img('assets/images/items/heart_full.png', C.ITEM_SCALE)
+
+coin_images = [load_img(f'assets/images/items/coin_f{i}.png', C.ITEM_SCALE) for i in range(4)]
+red_potion = load_img('assets/images/items/potion_red.png', C.POTION_SCALE)
+item_images = [coin_images, red_potion]
+
+bow_image = load_img('assets/images/weapons/bow.png', C.WEAPON_SCALE)
+arrow_image = load_img('assets/images/weapons/arrow.png', C.WEAPON_SCALE)
+fireball_image = load_img('assets/images/weapons/fireball.png', C.FIREBALL_SCALE)
+
+tile_list = [
+  pygame.transform.scale(pygame.image.load(f'assets/images/tiles/{i}.png').convert_alpha(), (C.TILE_SIZE, C.TILE_SIZE))
+  for i in range(C.TILE_TYPES)
+]
+
+mob_types = ['elf', 'imp', 'skeleton', 'goblin', 'mud_crab', 'zombie', 'demon']
+animation_types = ['idle', 'run']
+mob_animations = []
+for mob in mob_types:
+  actions = [[load_img(f'assets/images/characters/{mob}/{anim}/{i}.png', C.SCALE) for i in range(4)]
+             for anim in animation_types]
+  flipped = [[pygame.transform.flip(img, True, False) for img in frames] for frames in actions]
+  mob_animations.append([actions, flipped])
+
+
 def draw_text(text, fnt, colour, x, y, center=False):
   img = fnt.render(text, True, colour)
   screen.blit(img, img.get_rect(center=(x, y)) if center else (x, y))
 
 
 def level_exists(n):
-  pass
-
-
-
-
-#==============================================
+  return os.path.exists(f'levels/level{n}_data.csv')
 
 
 class Camera():
-  pass
+  def __init__(self):
+    self.x = 0
+    self.y = 0
+
+  def follow(self, rect):
+    W, H, TH = C.SCREEN_WIDTH, C.SCREEN_HEIGHT, C.SCROLL_THRESH
+    sx, sy = rect.x - self.x, rect.y - self.y
+    if sx + rect.w > W - TH:
+      self.x += sx + rect.w - (W - TH)
+    elif sx < TH:
+      self.x -= TH - sx
+    if sy + rect.h > H - TH:
+      self.y += sy + rect.h - (H - TH)
+    elif sy < TH:
+      self.y -= TH - sy
+
+  @property
+  def pos(self):
+    return (self.x, self.y)
+
+  @property
+  def view(self):
+    return pygame.Rect(self.x, self.y, C.SCREEN_WIDTH, C.SCREEN_HEIGHT)
 
 
 class DamageText(pygame.sprite.Sprite):
-  pass
+  def __init__(self, x, y, damage, colour):
+    super().__init__()
+    self.image = font.render(damage, True, colour)
+    self.rect = self.image.get_rect(center=(x, y))
+    self.counter = 0
 
+  def update(self):
+    self.rect.y -= 1
+    self.counter += 1
+    if self.counter > 30:
+      self.kill()
 
-#================================================
+  def draw(self, surface, cam):
+    surface.blit(self.image, (self.rect.x - cam[0], self.rect.y - cam[1]))
 
 
 class ScreenFade():
@@ -80,32 +141,109 @@ class ScreenFade():
       pygame.draw.rect(screen, self.colour, (0, 0, W, f))
     return self.fade_counter >= W
 
-#========================================
-
 
 class Game():
   def __init__(self):
-    pass
+    self.level = 1
+    self.bow = Weapon(bow_image, arrow_image)
+    self.score_coin = Item(C.SCREEN_WIDTH - 115, 23, 0, coin_images)
+    self._score_cache = (None, None)
+    self.load(1)
 
   def load(self, level, health=None, score=0):
-    pass
+    self.level = level
+    self.world = World(load_level_data(level), tile_list, item_images, mob_animations)
+    self.player = self.world.player
+    if health is not None:
+      self.player.health = health
+    self.player.score = score
+    self.enemies = self.world.character_list
+    self.items = pygame.sprite.Group(self.world.item_list)
+    self.arrows = pygame.sprite.Group()
+    self.fireballs = pygame.sprite.Group()
+    self.damage_texts = pygame.sprite.Group()
+    self.camera = Camera()
+    self.camera.follow(self.player.rect)
+    self.level_text = font.render(f'LEVEL: {level}', True, C.WHITE)
+    self.bow.fired = True  
 
   def level_complete(self):
-    pass
+    ex = self.world.exit_rect
+    if ex is None or not ex.colliderect(self.player.rect):
+      return False
+    return math.dist(self.player.rect.center, ex.center) < 20
 
   def update(self, keys, mouse_pos, mouse_down):
-    pass
+    now = pygame.time.get_ticks()
+    player, world = self.player, self.world
+
+    dx = (keys[pygame.K_d] - keys[pygame.K_a]) * C.SPEED
+    dy = (keys[pygame.K_s] - keys[pygame.K_w]) * C.SPEED
+    player.move(dx, dy, world)
+    self.camera.follow(player.rect)
+    cam, view = self.camera.pos, self.camera.view
+
+    for enemy in self.enemies:
+      fireball = enemy.ai(player, world, fireball_image, now)
+      if fireball:
+        self.fireballs.add(fireball)
+      enemy.update(now)
+    self.enemies = [e for e in self.enemies if e.alive]
+    player.update(now)
+
+    arrow = self.bow.update(player, cam, mouse_pos, mouse_down, now)
+    if arrow:
+      self.arrows.add(arrow)
+      sounds['shot'].play()
+    for arrow in self.arrows.sprites():
+      damage, pos = arrow.update(world, view, self.enemies)
+      if damage:
+        self.damage_texts.add(DamageText(pos.centerx, pos.y, str(damage), C.RED))
+        sounds['hit'].play()
+
+    self.damage_texts.update()
+    self.fireballs.update(world, view, player, now)
+    self.items.update(player, sounds, now)
+    self.score_coin.animate(now)
 
   def draw(self):
-    pass
+    cam = self.camera.pos
+    screen.fill(C.BG)
+    self.world.draw(screen, cam)
+    for item in self.items:
+      item.draw(screen, cam)
+    for enemy in self.enemies:
+      enemy.draw(screen, cam)
+    self.player.draw(screen, cam)
+    self.bow.draw(screen, self.player, cam)
+    for group in (self.arrows, self.fireballs, self.damage_texts):
+      for sprite in group:
+        sprite.draw(screen, cam)
+    self.draw_info()
 
   def draw_info(self):
-    pass
+    pygame.draw.rect(screen, C.PANEL, (0, 0, C.SCREEN_WIDTH, C.PANEL_HEIGHT))
+    pygame.draw.line(screen, C.WHITE, (0, C.PANEL_HEIGHT), (C.SCREEN_WIDTH, C.PANEL_HEIGHT))
+    hp = self.player.health
+    half_drawn = False
+    for i in range(5):
+      if hp >= (i + 1) * 20:
+        heart = heart_full
+      elif hp % 20 > 0 and not half_drawn:
+        heart = heart_half
+        half_drawn = True
+      else:
+        heart = heart_empty
+      screen.blit(heart, (10 + i * 50, 0))
+    screen.blit(self.level_text, (C.SCREEN_WIDTH / 2, 15))
+    if self._score_cache[0] != self.player.score:
+      self._score_cache = (self.player.score, font.render(f'X{self.player.score}', True, C.WHITE))
+    screen.blit(self._score_cache[1], (C.SCREEN_WIDTH - 100, 15))
+    self.score_coin.draw(screen, (0, 0))
 
-#===============================================
 
-OPEN_TIME = 1.5   
-FADE_TIME = 0.5 
+OPEN_TIME = 1.5  
+FADE_TIME = 0.5   
 
 
 def ease_in_out(x):
@@ -120,6 +258,7 @@ def main():
   death_fade = ScreenFade(2, C.BLOOD, 4)
   black = pygame.Surface((C.SCREEN_WIDTH, C.SCREEN_HEIGHT))
   cx, cy = C.SCREEN_WIDTH // 2, C.SCREEN_HEIGHT // 2
+
   tick = scene.tick
   main_menu = Menu([('ENTER THE PRISON', 'start'), ('FLEE', 'quit')], cx, 508, 44, tick_sound=tick)
   pause_menu = Menu([('RESUME', 'resume'), ('FLEE', 'quit')], cx, cy + 40, 50, tick_sound=tick)
@@ -130,7 +269,8 @@ def main():
                             glow=(120, 0, 0))
   won_text = ui.CarvedText(ui.fit_font('YOU ESCAPED', 700, 80), 'YOU ESCAPED')
   coins_font = ui.font_for('COINS 0123456789', 24)
-  state = 'menu'
+
+  state = 'menu' 
   start_intro = False
   open_started = 0.0
   last = pygame.time.get_ticks() / 1000
@@ -149,7 +289,7 @@ def main():
         if state == 'playing' and game.player.alive:
           overlay.capture(screen)
           state = 'paused'
-          events = []  
+          events = []
         elif state == 'paused':
           state = 'playing'
           game.bow.fired = True
@@ -207,7 +347,7 @@ def main():
       elif action == 'quit':
         run = False
 
-    else:  
+    else:
       if game.player.alive:
         game.update(pygame.key.get_pressed(), mouse_pos, pygame.mouse.get_pressed()[0])
       game.draw()
@@ -217,7 +357,7 @@ def main():
           game.load(game.level + 1, game.player.health, game.player.score)
           start_intro = True
         else:
-          scene.raise_amount, scene.eye_alpha = 1.0, 0.0  
+          scene.raise_amount, scene.eye_alpha = 1.0, 0.0
           state = 'won'
 
       if start_intro and intro_fade.fade():
